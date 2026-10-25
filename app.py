@@ -17,7 +17,6 @@ IMF_SDMX_BASE = "https://api.imf.org/external/sdmx/3.0"
 START_PERIOD_DEFAULT = "1976-M01"
 REQUEST_TIMEOUT = 30
 
-# Comprehensive list of IMF member economies plus the Euro Area (G163)
 IMF_COUNTRIES: Dict[str, str] = {
     "G163": "Euro Area (G163)",
     "AFG": "Afghanistan (AFG)",
@@ -220,13 +219,13 @@ IMF_COUNTRIES: Dict[str, str] = {
 # IMF SDMX 3.0 Data Retrieval Functions
 # ---------------------------------------------------------------------------
 def _parse_time_period(series: pd.Series) -> pd.Series:
-    """Convert IMF monthly strings (e.g. '1976-M01' or '1976-01') to Timestamp."""
+    # Convert IMF monthly strings (e.g. '1976-M01' or '1976-01') to Timestamp
     cleaned = series.astype(str).str.strip().str.replace("-M", "-", regex=False)
     return pd.to_datetime(cleaned, format="%Y-%m", errors="coerce")
 
 
 def _fetch_sdmx_csv(url: str) -> Optional[pd.Series]:
-    """Attempt to retrieve IMF SDMX 3.0 series as CSV."""
+    # Attempt to retrieve IMF SDMX 3.0 series as CSV
     headers = {
         "Accept": "text/csv",
         "User-Agent": "IMF-RER-Calculator/1.0 (Python/3.12)",
@@ -249,7 +248,7 @@ def _fetch_sdmx_csv(url: str) -> Optional[pd.Series]:
 
 
 def _fetch_sdmx_json(url: str) -> Optional[pd.Series]:
-    """Fallback parser for SDMX-JSON 2.0 responses from IMF SDMX 3.0 API."""
+    # Fallback parser for SDMX-JSON 2.0 responses from IMF SDMX 3.0 API
     headers = {
         "Accept": "application/vnd.sdmx.data+json;version=2.0.0",
         "User-Agent": "IMF-RER-Calculator/1.0 (Python/3.12)",
@@ -265,12 +264,7 @@ def _fetch_sdmx_json(url: str) -> Optional[pd.Series]:
     if not datasets or not structures:
         return None
 
-    # Locate observation time dimension values
-    obs_dims = (
-        structures[0]
-        .get("dimensions", {})
-        .get("observation", [])
-    )
+    obs_dims = structures[0].get("dimensions", {}).get("observation", [])
     time_values = []
     for dim in obs_dims:
         if dim.get("id") in ("TIME_PERIOD", "TIME"):
@@ -309,18 +303,7 @@ def _fetch_sdmx_json(url: str) -> Optional[pd.Series]:
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_imf_series(dataflow: str, key: str, start_period: str = START_PERIOD_DEFAULT) -> pd.Series:
-    """
-    Fetch a monthly series from the IMF SDMX 3.0 API starting from January 1976.
-
-    Parameters
-    ----------
-    dataflow : str
-        IMF.STA dataflow identifier ('CPI' or 'ER').
-    key : str
-        Series key (e.g. '{ISO3}.CPI._T.IX.M' or '{ISO3}.XDC_USD.PA_RT.M').
-    start_period : str
-        Start period filter in 'YYYY-MXX' format.
-    """
+    # Fetch a monthly series from the IMF SDMX 3.0 API starting from January 1976
     candidate_urls = [
         f"{IMF_SDMX_BASE}/data/dataflow/IMF.STA/{dataflow}/~/{key}?c[TIME_PERIOD]=ge:{start_period}",
         f"{IMF_SDMX_BASE}/data/dataflow/IMF.STA/{dataflow}/+/{key}?startPeriod={start_period.replace('-M', '-')}",
@@ -346,10 +329,7 @@ def fetch_imf_series(dataflow: str, key: str, start_period: str = START_PERIOD_D
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_country_pair_data(iso1: str, iso2: str) -> Tuple[pd.DataFrame, Dict[str, bool]]:
-    """
-    Retrieve monthly CPI and XDC_USD exchange rate series for Country 1 and Country 2
-    from January 1976 onward and align them on a monthly calendar grid.
-    """
+    # Retrieve monthly CPI and XDC_USD exchange rate series for Country 1 and Country 2
     cpi_key_1 = f"{iso1}.CPI._T.IX.M"
     cpi_key_2 = f"{iso2}.CPI._T.IX.M"
     er_key_1 = f"{iso1}.XDC_USD.PA_RT.M"
@@ -360,7 +340,6 @@ def load_country_pair_data(iso1: str, iso2: str) -> Tuple[pd.DataFrame, Dict[str
     e1 = fetch_imf_series("ER", er_key_1)
     e2 = fetch_imf_series("ER", er_key_2)
 
-    # Construct a unified monthly index from 1976-01 to the latest available observation
     non_empty_indices = [s.index for s in (p1, p2, e1, e2) if not s.empty]
     if not non_empty_indices:
         return pd.DataFrame(), {
@@ -381,13 +360,11 @@ def load_country_pair_data(iso1: str, iso2: str) -> Tuple[pd.DataFrame, Dict[str
     df["E1_XDC_USD"] = e1.reindex(full_index)
     df["E2_XDC_USD"] = e2.reindex(full_index)
 
-    # Ensure United States domestic currency per USD is identically 1.0
     if iso1 == "USA":
         df["E1_XDC_USD"] = df["E1_XDC_USD"].fillna(1.0)
     if iso2 == "USA":
         df["E2_XDC_USD"] = df["E2_XDC_USD"].fillna(1.0)
 
-    # Guard against non-positive values prior to division
     df.loc[df["E1_XDC_USD"] <= 0, "E1_XDC_USD"] = np.nan
     df.loc[df["E2_XDC_USD"] <= 0, "E2_XDC_USD"] = np.nan
     df.loc[df["P1_CPI"] <= 0, "P1_CPI"] = np.nan
@@ -400,10 +377,10 @@ def load_country_pair_data(iso1: str, iso2: str) -> Tuple[pd.DataFrame, Dict[str
     df["RER_Raw"] = df["S_Nominal"] * (df["P1_CPI"] / df["P2_CPI"])
 
     diagnostics = {
-        "p1_ok": df["P1_CPI"].notna().any(),
-        "p2_ok": df["P2_CPI"].notna().any(),
-        "e1_ok": df["E1_XDC_USD"].notna().any(),
-        "e2_ok": df["E2_XDC_USD"].notna().any(),
+        "p1_ok": bool(df["P1_CPI"].notna().any()),
+        "p2_ok": bool(df["P2_CPI"].notna().any()),
+        "e1_ok": bool(df["E1_XDC_USD"].notna().any()),
+        "e2_ok": bool(df["E2_XDC_USD"].notna().any()),
     }
     return df, diagnostics
 
@@ -411,10 +388,7 @@ def load_country_pair_data(iso1: str, iso2: str) -> Tuple[pd.DataFrame, Dict[str
 def compute_sample_metrics(
     df: pd.DataFrame, start_date: pd.Timestamp, end_date: pd.Timestamp
 ) -> Tuple[pd.DataFrame, Optional[float]]:
-    """
-    Slice the dataset to [start_date, end_date], compute RER* as the mean of RER(t)
-    over valid months in that interval, and compute Real_Index(t) = 100 * RER(t) / RER*.
-    """
+    # Slice dataset to [start_date, end_date] and compute RER* and Real_Index(t)
     sample = df.loc[(df.index >= start_date) & (df.index <= end_date)].copy()
     valid_rer = sample["RER_Raw"].dropna()
 
@@ -436,10 +410,10 @@ def build_interactive_chart(
     series_mode: str,
     rer_star: Optional[float],
 ) -> go.Figure:
-    """Create an interactive Plotly chart for Real, Nominal, or Both series."""
+    # Create an interactive Plotly chart for Real, Nominal, or Both series
     fig = make_subplots(specs=[[{"secondary_y": True}]])
 
-    real_label = f"Real Exchange Rate Index (Sample Mean = 100)"
+    real_label = "Real Exchange Rate Index (Sample Mean = 100)"
     nominal_label = f"Nominal S(t): {iso2} Currency per 1 {iso1} Currency"
 
     if series_mode in ("Real", "Both"):
@@ -451,14 +425,10 @@ def build_interactive_chart(
                 name=real_label,
                 line=dict(color="#1f4e78", width=2.4),
                 connectgaps=False,
-                hovertemplate=(
-                    "<b>%{x|%Y-%m}</b><br>"
-                    "Real Index(t): %{y:.2f}<extra></extra>"
-                ),
+                hovertemplate="<b>%{x|%Y-%m}</b><br>Real Index(t): %{y:.2f}<extra></extra>",
             ),
             secondary_y=False,
         )
-        # Reference line at 100 (equilibrium sample average RER*)
         fig.add_hline(
             y=100.0,
             line_dash="dash",
@@ -476,11 +446,14 @@ def build_interactive_chart(
                 y=sample_df["S_Nominal"],
                 mode="lines",
                 name=nominal_label,
-                line=dict(color="#c0392b", width=2.2, dash="solid" if not use_secondary else "dot"),
+                line=dict(
+                    color="#c0392b",
+                    width=2.2,
+                    dash="solid" if not use_secondary else "dot",
+                ),
                 connectgaps=False,
                 hovertemplate=(
-                    "<b>%{x|%Y-%m}</b><br>"
-                    f"Nominal S(t): %{{y:.4f}} ({iso2}/{iso1})<extra></extra>"
+                    f"<b>%{{x|%Y-%m}}</b><br>Nominal S(t): %{{y:.4f}} ({iso2}/{iso1})<extra></extra>"
                 ),
             ),
             secondary_y=use_secondary,
@@ -515,7 +488,7 @@ def build_interactive_chart(
 
     if series_mode == "Real":
         fig.update_yaxes(
-            title_text="Real Index(t) (100 × RER(t) / RER*)",
+            title_text="Real Index(t) (100 x RER(t) / RER*)",
             secondary_y=False,
             showgrid=True,
         )
@@ -529,7 +502,7 @@ def build_interactive_chart(
         fig.update_yaxes(showticklabels=False, showgrid=False, secondary_y=True)
     else:
         fig.update_yaxes(
-            title_text="Real Index(t) (100 × RER(t) / RER*)",
+            title_text="Real Index(t) (100 x RER(t) / RER*)",
             secondary_y=False,
             showgrid=True,
             title_font=dict(color="#1f4e78"),
@@ -557,9 +530,154 @@ def main() -> None:
 
     st.title("Bilateral Real and Nominal Exchange Rate Calculator")
     st.markdown(
-        """
-        This application retrieves monthly Consumer Price Index (`{ISO3}.CPI._T.IX.M`) and
-        US dollar exchange rate (`{ISO3}.XDC_USD.PA_RT.M`) observations from the
-        **IMF SDMX 3.0 API** (`https://api.imf.org/external/sdmx/3.0`) beginning in January 1976.
-        Nominal exchange rates $S(t)$ are expressed as units of **Country 2** currency per one unit
-        of **Country 1** currency
+        "This application retrieves monthly Consumer Price Index (`{ISO3}.CPI._T.IX.M`) and "
+        "US dollar exchange rate (`{ISO3}.XDC_USD.PA_RT.M`) observations from the "
+        "**IMF SDMX 3.0 API** (`https://api.imf.org/external/sdmx/3.0`) beginning in January 1976. "
+        "Nominal exchange rates **S(t)** are expressed as units of **Country 2** currency per one unit "
+        "of **Country 1** currency. The real exchange rate is **RER(t) = S(t) x P1(t) / P2(t)**, "
+        "and the indexed series is normalized to the sample-period average **RER***: "
+        "**Real Index(t) = 100 x RER(t) / RER***."
+    )
+
+    country_codes = list(IMF_COUNTRIES.keys())
+    default_c1_idx = country_codes.index("USA") if "USA" in country_codes else 0
+    default_c2_idx = country_codes.index("G163") if "G163" in country_codes else 1
+
+    with st.sidebar:
+        st.header("Model Parameters")
+        iso1 = st.selectbox(
+            "Country 1 (Base Currency, P1)",
+            options=country_codes,
+            index=default_c1_idx,
+            format_func=lambda code: IMF_COUNTRIES[code],
+        )
+        iso2 = st.selectbox(
+            "Country 2 (Quote Currency, P2)",
+            options=country_codes,
+            index=default_c2_idx,
+            format_func=lambda code: IMF_COUNTRIES[code],
+        )
+
+        series_mode = st.radio(
+            "Chart Display Mode",
+            options=["Both", "Real", "Nominal"],
+            index=0,
+            help="Select 'Both' to plot Real Index(t) on the left axis and unnormalized Nominal S(t) on the right axis.",
+        )
+
+    with st.spinner("Querying IMF SDMX 3.0 API for monthly CPI and exchange rate series..."):
+        df, diagnostics = load_country_pair_data(iso1, iso2)
+
+    if df.empty:
+        st.error(
+            "No monthly CPI or exchange rate observations were returned by the IMF API "
+            "for the selected country pair."
+        )
+        return
+
+    missing_components = []
+    if not diagnostics["p1_ok"]:
+        missing_components.append(f"Country 1 CPI ({iso1}.CPI._T.IX.M)")
+    if not diagnostics["p2_ok"]:
+        missing_components.append(f"Country 2 CPI ({iso2}.CPI._T.IX.M)")
+    if not diagnostics["e1_ok"]:
+        missing_components.append(f"Country 1 Exchange Rate ({iso1}.XDC_USD.PA_RT.M)")
+    if not diagnostics["e2_ok"]:
+        missing_components.append(f"Country 2 Exchange Rate ({iso2}.XDC_USD.PA_RT.M)")
+
+    if missing_components:
+        st.warning(
+            "Limited IMF data coverage detected. The following series returned no valid monthly "
+            "observations: " + ", ".join(missing_components)
+        )
+
+    valid_any = df.dropna(subset=["S_Nominal", "RER_Raw"], how="all")
+    if valid_any.empty:
+        min_available = df.index.min().to_pydatetime()
+        max_available = df.index.max().to_pydatetime()
+    else:
+        min_available = valid_any.index.min().to_pydatetime()
+        max_available = valid_any.index.max().to_pydatetime()
+
+    all_months = df.index.to_pydatetime().tolist()
+
+    with st.sidebar:
+        st.subheader("Sample Window")
+        selected_range = st.select_slider(
+            "Select Start and End Months",
+            options=all_months,
+            value=(min_available, max_available),
+            format_func=lambda dt: dt.strftime("%Y-%m"),
+        )
+
+    start_ts = pd.Timestamp(selected_range[0])
+    end_ts = pd.Timestamp(selected_range[1])
+
+    sample_df, rer_star = compute_sample_metrics(df, start_ts, end_ts)
+
+    col1, col2, col3, col4 = st.columns(4)
+    valid_rer_count = int(sample_df["RER_Raw"].notna().sum())
+    valid_nom_count = int(sample_df["S_Nominal"].notna().sum())
+    total_months = len(sample_df)
+
+    col1.metric("Selected Sample Period", f"{start_ts.strftime('%Y-%m')} to {end_ts.strftime('%Y-%m')}")
+    col2.metric(
+        "Sample Mean RER*",
+        f"{rer_star:.4f}" if rer_star is not None else "N/A",
+    )
+    latest_real = sample_df["Real_Index"].dropna()
+    col3.metric(
+        "Latest Real Index(t)",
+        f"{latest_real.iloc[-1]:.2f}" if not latest_real.empty else "N/A",
+    )
+    latest_nom = sample_df["S_Nominal"].dropna()
+    col4.metric(
+        f"Latest Nominal S(t) ({iso2}/{iso1})",
+        f"{latest_nom.iloc[-1]:.4f}" if not latest_nom.empty else "N/A",
+    )
+
+    if valid_rer_count < total_months or valid_nom_count < total_months:
+        st.info(
+            f"Data coverage note: Within the {total_months} selected months, "
+            f"{valid_nom_count} months contain valid nominal exchange rates S(t) and "
+            f"{valid_rer_count} months contain complete observations for RER(t)."
+        )
+
+    if sample_df["Real_Index"].notna().any() or sample_df["S_Nominal"].notna().any():
+        fig = build_interactive_chart(sample_df, iso1, iso2, series_mode, rer_star)
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.warning("No valid Real or Nominal exchange rate observations exist within the selected date range.")
+
+    export_df = sample_df.copy()
+    export_df.index = export_df.index.strftime("%Y-%m")
+    export_df = export_df.reset_index().rename(
+        columns={
+            "Date": "Month",
+            "P1_CPI": f"P1_CPI_{iso1}",
+            "P2_CPI": f"P2_CPI_{iso2}",
+            "E1_XDC_USD": f"E1_XDC_USD_{iso1}",
+            "E2_XDC_USD": f"E2_XDC_USD_{iso2}",
+            "S_Nominal": f"S_Nominal_{iso2}_per_{iso1}",
+            "RER_Raw": "RER_t",
+            "RER_Star": "RER_Star_Sample_Mean",
+            "Real_Index": "Real_Index_t",
+        }
+    )
+
+    csv_bytes = export_df.to_csv(index=False).encode("utf-8")
+    csv_filename = f"imf_rer_{iso1}_{iso2}_{start_ts.strftime('%Y%m')}_{end_ts.strftime('%Y%m')}.csv"
+
+    st.download_button(
+        label="Download Sample Observations and Calculations (CSV)",
+        data=csv_bytes,
+        file_name=csv_filename,
+        mime="text/csv",
+    )
+
+    with st.expander("Inspect Sample Period Data Table"):
+        st.dataframe(export_df, use_container_width=True, hide_index=True)
+
+
+if __name__ == "__main__":
+    main()
